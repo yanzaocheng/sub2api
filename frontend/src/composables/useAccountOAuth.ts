@@ -6,6 +6,7 @@ export type AddMethod = 'oauth' | 'setup-token'
 export type AuthInputMethod =
   | 'manual'
   | 'cookie'
+  | 'oauth_credentials'
   | 'refresh_token'
   | 'mobile_refresh_token'
   | 'session_token'

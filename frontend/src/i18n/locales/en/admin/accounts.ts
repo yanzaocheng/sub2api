@@ -1133,6 +1133,22 @@ export default {
         title: 'Claude Account Authorization',
         authMethod: 'Authorization Method',
         manualAuth: 'Manual Authorization',
+        credentialsImportAuth: 'Paste OAuth Credentials',
+        credentialsImportDesc: 'Paste an existing Claude OAuth token JSON or credential file, including Claude Code claudeAiOauth format. Import one account using the configuration from step one.',
+        credentialsImportLabel: 'OAuth Credentials JSON',
+        credentialsImportPlaceholder: '{"access_token":"...","refresh_token":"..."}',
+        credentialsImportButton: 'Import OAuth Credentials',
+        credentialsImportFailed: 'Failed to import OAuth credentials. Check the credentials and account configuration.',
+        credentialsImportErrors: {
+          empty: 'Paste your OAuth token JSON first.',
+          invalidJson: 'Invalid JSON. Paste a complete OAuth credential object.',
+          invalidObject: 'Paste one OAuth credential JSON object, not an array or a plain text token.',
+          missingAccessToken: 'A valid access_token (or accessToken) is required.',
+          invalidRefreshToken: 'refresh_token (or refreshToken) must be a valid string.',
+          invalidExpiry: 'Invalid expiration. Use Unix seconds, milliseconds, or an ISO date.',
+          invalidScope: 'scope must be a string or scopes must be an array of strings.',
+          expiredWithoutRefreshToken: 'The access token has expired and no refresh token was provided. Paste refreshable credentials or authorize again.'
+        },
         cookieAutoAuth: 'Cookie Auto-Auth',
         cookieAutoAuthDesc:
           'Use claude.ai sessionKey to automatically complete OAuth authorization without manually opening browser.',

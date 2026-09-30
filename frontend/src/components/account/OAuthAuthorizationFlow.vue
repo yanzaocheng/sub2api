@@ -12,7 +12,7 @@
         <!-- Auth Method Selection -->
         <div v-if="showMethodSelection" class="mb-4">
           <label class="mb-2 block text-sm font-medium text-blue-800 dark:text-blue-300">
-            {{ methodLabel }}
+            {{ methodLabel || t('admin.accounts.oauth.authMethod') }}
           </label>
           <div class="flex flex-wrap gap-4">
             <label v-if="showManualOption" class="flex cursor-pointer items-center gap-2">
@@ -36,6 +36,10 @@
               <span class="text-sm text-blue-900 dark:text-blue-200">{{
                 t('admin.accounts.oauth.cookieAutoAuth')
               }}</span>
+            </label>
+            <label v-if="showOauthCredentialsOption" class="flex cursor-pointer items-center gap-2">
+              <input v-model="inputMethod" type="radio" value="oauth_credentials" class="text-blue-600 focus:ring-blue-500" />
+              <span class="text-sm text-blue-900 dark:text-blue-200">{{ t('admin.accounts.oauth.credentialsImportAuth') }}</span>
             </label>
             <label v-if="showRefreshTokenOption" class="flex cursor-pointer items-center gap-2">
               <input
@@ -523,6 +527,37 @@
           </div>
         </div>
 
+        <!-- Import an existing Claude OAuth credential. -->
+        <div v-if="inputMethod === 'oauth_credentials'" class="space-y-4">
+          <div class="rounded-lg border border-blue-300 bg-white/80 p-4 dark:border-blue-600 dark:bg-gray-800/80">
+            <p id="claude-oauth-import-hint" class="mb-3 text-sm text-blue-700 dark:text-blue-300">
+              {{ t('admin.accounts.oauth.credentialsImportDesc') }}
+            </p>
+            <label for="claude-oauth-credentials" class="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300">
+              <Icon name="key" size="sm" class="text-blue-500" />
+              {{ t('admin.accounts.oauth.credentialsImportLabel') }}
+            </label>
+            <textarea
+              id="claude-oauth-credentials"
+              v-model="oauthCredentialsInput"
+              rows="6"
+              class="input w-full resize-y font-mono text-sm"
+              :placeholder="t('admin.accounts.oauth.credentialsImportPlaceholder')"
+              :disabled="loading"
+              spellcheck="false"
+              autocapitalize="none"
+              autocomplete="off"
+              aria-describedby="claude-oauth-import-hint"
+            ></textarea>
+            <div v-if="error" role="alert" class="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30">
+              <p class="whitespace-pre-line text-sm text-red-600 dark:text-red-400">{{ error }}</p>
+            </div>
+            <button type="button" class="btn btn-primary mt-4 w-full" :disabled="loading || !oauthCredentialsInput.trim()" @click="handleImportOAuthCredentials">
+              {{ loading ? t('admin.accounts.creating') : t('admin.accounts.oauth.credentialsImportButton') }}
+            </button>
+          </div>
+        </div>
+
         <!-- Cookie Auto-Auth Form -->
         <div v-if="inputMethod === 'cookie'" class="space-y-4">
           <div
@@ -913,6 +948,7 @@ interface Props {
   allowMultiple?: boolean
   methodLabel?: string
   showCookieOption?: boolean // Whether to show cookie auto-auth option
+  showOauthCredentialsOption?: boolean
   showRefreshTokenOption?: boolean // Whether to show refresh token input option (OpenAI only)
   showMobileRefreshTokenOption?: boolean // Whether to show mobile refresh token option (OpenAI only)
   showSessionTokenOption?: boolean
@@ -942,8 +978,9 @@ const props = withDefaults(defineProps<Props>(), {
   showHelp: true,
   showProxyWarning: true,
   allowMultiple: false,
-  methodLabel: 'Authorization Method',
+  methodLabel: '',
   showCookieOption: true,
+  showOauthCredentialsOption: false,
   showRefreshTokenOption: false,
   showMobileRefreshTokenOption: false,
   showSessionTokenOption: false,
@@ -964,6 +1001,7 @@ const emit = defineEmits<{
   'generate-url': []
   'exchange-code': [code: string]
   'cookie-auth': [sessionKey: string]
+  'import-oauth-credentials': [content: string]
   'validate-refresh-token': [refreshToken: string]
   'validate-mobile-refresh-token': [refreshToken: string]
   'validate-session-token': [sessionToken: string]
@@ -1016,6 +1054,7 @@ const inputMethod = ref<AuthInputMethod>(props.initialInputMethod)
 const isAgentIdentityInput = computed(() => inputMethod.value === 'agent_identity')
 const authCodeInput = ref('')
 const sessionKeyInput = ref('')
+const oauthCredentialsInput = ref('')
 const refreshTokenInput = ref('')
 const sessionTokenInput = ref('')
 const codexSessionInput = ref('')
@@ -1049,6 +1088,7 @@ watch(emailPasswordOptionEnabled, (enabled) => {
 const methodOptionCount = computed(() => [
   props.showManualOption,
   props.showCookieOption,
+  props.showOauthCredentialsOption,
   props.showRefreshTokenOption,
   props.showMobileRefreshTokenOption,
   props.showSessionTokenOption,
@@ -1185,6 +1225,12 @@ const handleCookieAuth = () => {
   }
 }
 
+const handleImportOAuthCredentials = () => {
+  if (!props.loading && oauthCredentialsInput.value.trim()) {
+    emit('import-oauth-credentials', oauthCredentialsInput.value.trim())
+  }
+}
+
 const handleValidateRefreshToken = () => {
   if (refreshTokenInput.value.trim()) {
     if (inputMethod.value === 'mobile_refresh_token') {
@@ -1231,6 +1277,7 @@ defineExpose({
     oauthState.value = ''
     projectId.value = ''
     sessionKeyInput.value = ''
+    oauthCredentialsInput.value = ''
     refreshTokenInput.value = ''
     sessionTokenInput.value = ''
     codexSessionInput.value = ''

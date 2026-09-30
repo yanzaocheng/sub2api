@@ -81,12 +81,13 @@ const OAuthAuthorizationFlowStub = defineComponent({
   props: {
     showManualOption: Boolean,
     showCodexSessionImportOption: Boolean,
+    showOauthCredentialsOption: Boolean,
     showAgentIdentityOption: Boolean,
     showCodexPatOption: Boolean,
     initialInputMethod: String,
   },
   data: () => ({ inputMethod: 'manual' }),
-  emits: ['import-codex-session', 'import-codex-pat'],
+  emits: ['import-codex-session', 'import-codex-pat', 'import-oauth-credentials'],
   template: `
     <div>
       <button data-testid="import-codex-session" @click="$emit('import-codex-session', 'session-json')">session</button>
@@ -710,5 +711,41 @@ describe('CreateAccountModal OpenAI long-context billing', () => {
     await flushPromises()
 
     expect(createOpenAICodexPATMock.mock.calls[0]?.[0]?.extra?.openai_long_context_billing_enabled).toBe(false)
+  })
+
+  it('creates a Claude OAuth account from pasted credentials and preserves TLS and group settings', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Anthropic')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Imported Claude')
+    const tlsLabel = wrapper.findAll('label').find(item => item.text() === 'admin.accounts.quotaControl.tlsFingerprint.label')!
+    const tlsCard = tlsLabel.element.closest('.rounded-lg')!
+    const tlsToggle = tlsCard.querySelector('button') as HTMLButtonElement
+    tlsToggle.click()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('[data-testid="select-pricing-groups"]').trigger('click')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    const flow = wrapper.findComponent(OAuthAuthorizationFlowStub)
+    expect(flow.props('showOauthCredentialsOption')).toBe(true)
+    flow.vm.$emit('import-oauth-credentials', '{"claudeAiOauth":{"accessToken":"access-test","refreshToken":"refresh-test","expiresAt":4102444800000}}')
+    await flushPromises()
+    expect(createAccountMock).toHaveBeenCalledTimes(1)
+    expect(createAccountMock.mock.calls[0][0]).toMatchObject({
+      name: 'Imported Claude', platform: 'anthropic', type: 'oauth', group_ids: [1, 2],
+      credentials: { access_token: 'access-test', refresh_token: 'refresh-test', expires_at: 4102444800 },
+      extra: { enable_tls_fingerprint: true }
+    })
+    expect(wrapper.emitted('created')).toHaveLength(1)
+  })
+
+  it('does not create a Claude account from malformed credentials', async () => {
+    const wrapper = mountModal()
+    await selectButtonByText(wrapper, 'Anthropic')
+    await wrapper.get('form#create-account-form input[type="text"]').setValue('Invalid Claude')
+    await wrapper.get('form#create-account-form').trigger('submit.prevent')
+    const flow = wrapper.findComponent(OAuthAuthorizationFlowStub)
+    flow.vm.$emit('import-oauth-credentials', '{"refresh_token":"test"}')
+    await flushPromises()
+    expect(createAccountMock).not.toHaveBeenCalled()
+    expect(flow.attributes('error')).toContain('missingAccessToken')
   })
 })
