@@ -43,8 +43,8 @@ func skipIfExternalServiceUnavailable(t *testing.T, err error) {
 
 // TestJA3Fingerprint verifies the JA3/JA4 fingerprint matches expected value.
 // This test uses tls.peet.ws to verify the fingerprint.
-// Expected JA3 hash: 44f88fca027f27bab4bb08d4af15f23e (Node.js 24.x)
-// Expected JA4: t13d1714h1_5b57614c22b0_7baf387fc6ff
+// Expected JA3 hash: 1523504b38f0fae0d881d4b6554aac1b (Claude Code / Bun 1.4.3)
+// Expected JA4: t13d1713h1_5b57614c22b0_6a3d802a7139
 func TestJA3Fingerprint(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -92,7 +92,7 @@ func TestJA3Fingerprint(t *testing.T) {
 	t.Logf("JA3 Hash: %s", fpResp.TLS.JA3Hash)
 	t.Logf("JA4: %s", fpResp.TLS.JA4)
 
-	expectedJA3Hash := "44f88fca027f27bab4bb08d4af15f23e"
+	expectedJA3Hash := "1523504b38f0fae0d881d4b6554aac1b"
 	if fpResp.TLS.JA3Hash == expectedJA3Hash {
 		t.Logf("✓ JA3 hash matches: %s", expectedJA3Hash)
 	} else {
@@ -118,9 +118,9 @@ func TestAllProfiles(t *testing.T) {
 	// These profiles are from config.yaml gateway.tls_fingerprint.profiles
 	profiles := []TestProfileExpectation{
 		{
-			// Default profile (Node.js 24.x)
+			// Default profile (Claude Code / Bun 1.4.3)
 			Profile: &Profile{
-				Name:         "default_node_v24",
+				Name:         "default_bun_v143",
 				EnableGREASE: false,
 			},
 			JA4CipherHash: "5b57614c22b0",
