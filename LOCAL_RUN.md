@@ -20,7 +20,9 @@ git merge origin/main
 # 重新构建、测试并启动本地服务。
 ```
 
-可以为每个功能创建分支，例如 `git switch -c feature/custom-billing custom`，完成后合并回 `custom`。官方仓库无需推送。以后有自己的 Git 仓库时，可增加 `personal` 远程并推送 `custom`，作为定制代码的异地备份。连接配置、私钥和 `.dev/` 不应加入提交。
+可以为每个功能创建分支，例如 `git switch -c feature/custom-billing custom`，完成后合并回 `custom`。
+
+个人远程 `personal` 指向 https://github.com/yanzaocheng/sub2api ，定制代码保存在 `personal/custom`。`custom` 的默认推送目标是个人仓库，官方远程 `origin` 用于获取更新。提交完成的源码后，可运行 `git push personal custom` 备份定制代码。连接配置、私钥和 `.dev/` 不应加入提交。
 
 在项目目录执行：
 
