@@ -1237,7 +1237,7 @@ export default {
         credentialsImportAuth: '粘贴 OAuth 凭证',
         credentialsImportDesc: '粘贴已有的 Claude OAuth token JSON 或凭证文件内容，也支持 Claude Code 的 claudeAiOauth 格式。每次导入一个账号，使用第一步填写的账号配置。',
         credentialsImportLabel: 'OAuth 凭证 JSON',
-        credentialsImportPlaceholder: '{"access_token":"...","refresh_token":"..."}',
+        credentialsImportPlaceholder: "{'{'}\"access_token\":\"...\",\"refresh_token\":\"...\"{'}'}",
         credentialsImportButton: '导入 OAuth 凭证',
         credentialsImportFailed: '导入 OAuth 凭证失败，请检查凭证和账号配置。',
         credentialsImportErrors: {

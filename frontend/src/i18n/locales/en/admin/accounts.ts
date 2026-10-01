@@ -1136,7 +1136,7 @@ export default {
         credentialsImportAuth: 'Paste OAuth Credentials',
         credentialsImportDesc: 'Paste an existing Claude OAuth token JSON or credential file, including Claude Code claudeAiOauth format. Import one account using the configuration from step one.',
         credentialsImportLabel: 'OAuth Credentials JSON',
-        credentialsImportPlaceholder: '{"access_token":"...","refresh_token":"..."}',
+        credentialsImportPlaceholder: "{'{'}\"access_token\":\"...\",\"refresh_token\":\"...\"{'}'}",
         credentialsImportButton: 'Import OAuth Credentials',
         credentialsImportFailed: 'Failed to import OAuth credentials. Check the credentials and account configuration.',
         credentialsImportErrors: {
