@@ -44,3 +44,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\stop-local.ps1
 本次前端在 `.dev/frontend-build` 中安装依赖和构建，页面产物位于 `backend/internal/web/dist`。源文件仍位于 `frontend/`，修改后需重新同步并构建页面，再以 `go build -tags=embed ./cmd/server` 构建后端。服务运行时先构建至另一个文件，停止本地后端后再替换 `.dev/sub2api.exe`。
 
 SSH MCP `ssh-poly` 已配置；`execute_command` 的自动批准设置写入用户级 Codex 配置。重新打开会话后加载新设置。
+
+## 用户对话记录
+
+后台侧边栏「对话记录」页面用于查看用户与模型的对话，开关在「系统设置 → 功能开关」的「用户对话记录」卡片，**默认关闭**，开启后才会保存新的对话。卡片里还可设置保留天数（0 为永久保留，超期自动删除）。
+
+- 记录范围：经网关转发的聊天类请求（Claude `/v1/messages`、OpenAI `/v1/chat/completions` 与 `/v1/responses`、Gemini `generateContent`），只保存成功（2xx）且有可见回复的请求。图片等附件只记占位符，思考内容不保存；WebSocket 形式的 Responses 暂不记录。
+- 每条记录只存本轮新增的输入和模型回复，历史由此前的记录保存；系统提示词、用户输入、回复均有长度上限，超长部分截断。同一场对话的各轮按「用户 + API Key + 系统提示词 + 第一条用户消息」归组，列表一行是一场对话，点击查看完整往来。
+- 对话内容以明文存放在数据库表 `conversation_records` 中，只有管理员可以查看；查看详情会写入「操作日志」。
+- 新增迁移 `241_conversation_records.sql`（只建表和索引）。本地后台与服务器共用数据库，所以**首次用新程序启动时会在服务器数据库中建好这张表**；旧版本程序不受影响，迁移也可以重复执行。
+- 写入由后台队列异步完成，数据库变慢或不可用时只会丢弃记录，不影响请求转发。

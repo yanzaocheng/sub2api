@@ -96,17 +96,20 @@ func TestHTTPUpstreamDoWithTLSPlainHTTPUsesConfiguredSOCKSProxy(t *testing.T) {
 	require.Equal(t, int64(1), upstreamCalls.Load())
 }
 
-func TestTLSFingerprintHTTPSProxyFallsBackWithoutBypassingProxy(t *testing.T) {
+func TestTLSFingerprintHTTPSProxyFailsClosed(t *testing.T) {
 	proxyURL, err := url.Parse("https://user:pass@proxy.example:8443")
 	require.NoError(t, err)
 	transport, err := buildUpstreamTransportWithTLSFingerprint(poolSettings{}, proxyURL, &tlsfingerprint.Profile{Name: "test"})
+	require.ErrorContains(t, err, "does not support HTTPS proxies")
+	require.Nil(t, transport)
+}
+
+func TestTLSFingerprintUnknownProxySchemeFailsClosed(t *testing.T) {
+	proxyURL, err := url.Parse("quic://proxy.example:443")
 	require.NoError(t, err)
-	require.NotNil(t, transport.Proxy)
-	require.Nil(t, transport.DialTLSContext)
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "upstream.example"}}
-	resolved, err := transport.Proxy(req)
-	require.NoError(t, err)
-	require.Equal(t, "https://user:pass@proxy.example:8443", resolved.String())
+	transport, err := buildUpstreamTransportWithTLSFingerprint(poolSettings{}, proxyURL, &tlsfingerprint.Profile{Name: "test"})
+	require.ErrorContains(t, err, "does not support proxy scheme")
+	require.Nil(t, transport)
 }
 
 func startTestSOCKS5Proxy(t *testing.T) (string, *atomic.Int64) {

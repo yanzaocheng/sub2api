@@ -601,6 +601,14 @@ func ProvideAuditLogService(repo AuditLogRepository, settingService *SettingServ
 	return svc
 }
 
+// ProvideConversationRecordService 创建对话记录服务并启动异步写入与保留期清理协程。
+// 停止逻辑挂在 cmd/server 的 provideCleanup。
+func ProvideConversationRecordService(repo ConversationRecordRepository, settingRepo SettingRepository) *ConversationRecordService {
+	svc := NewConversationRecordService(repo, settingRepo)
+	svc.Start()
+	return svc
+}
+
 func buildIdempotencyConfig(cfg *config.Config) IdempotencyConfig {
 	idempotencyCfg := DefaultIdempotencyConfig()
 	if cfg != nil {
@@ -916,6 +924,7 @@ var ProviderSet = wire.NewSet(
 	ProvideOpsService,
 	ProvideOpsIngressRejectAggregator,
 	ProvideAuditLogService,
+	ProvideConversationRecordService,
 	ProvideOpsMetricsCollector,
 	ProvideOpsAggregationService,
 	ProvideOpsAlertEvaluatorService,

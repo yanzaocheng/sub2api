@@ -1478,20 +1478,21 @@ func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *u
 			socks5Dialer := tlsfingerprint.NewSOCKS5ProxyDialer(profile, proxyURL)
 			transport.DialTLSContext = socks5Dialer.DialTLSContext
 		case "https":
-			// The fingerprint dialer emits a plaintext CONNECT preface and cannot
-			// establish TLS to an HTTPS proxy. Keep proxy routing via net/http.
-			return buildUpstreamTransport(settings, proxyURL, upstreamProtocolModeDefault)
+			// Do not silently downgrade to the standard transport here. An HTTPS
+			// proxy needs a TLS hop to the proxy itself before CONNECT can be sent;
+			// the fingerprint dialer does not implement that hop. Falling back
+			// would make a request configured for TLS fingerprinting leave with a
+			// different ClientHello than the caller expects.
+			return nil, fmt.Errorf("TLS fingerprint transport does not support HTTPS proxies; use HTTP or SOCKS5 proxy")
 		case "http":
 			// HTTP/HTTPS 代理：使用 HTTPProxyDialer（CONNECT 隧道）
 			slog.Debug("tls_fingerprint_transport_http_connect", "proxy", proxyURL.Host)
 			httpDialer := tlsfingerprint.NewHTTPProxyDialer(profile, proxyURL)
 			transport.DialTLSContext = httpDialer.DialTLSContext
 		default:
-			// 未知代理类型，回退到普通代理配置（无 TLS 指纹）
-			slog.Debug("tls_fingerprint_transport_unknown_scheme_fallback", "scheme", scheme)
-			if err := proxyutil.ConfigureTransportProxy(transport, proxyURL); err != nil {
-				return nil, err
-			}
+			// Unknown proxy schemes cannot guarantee the configured fingerprint.
+			// Fail closed instead of silently using a normal transport.
+			return nil, fmt.Errorf("TLS fingerprint transport does not support proxy scheme %q", scheme)
 		}
 	}
 
