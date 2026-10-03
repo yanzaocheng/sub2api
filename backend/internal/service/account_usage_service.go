@@ -1570,13 +1570,25 @@ func (s *AccountUsageService) fetchOAuthUsageRaw(ctx context.Context, account *A
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	var tlsProfile *tlsfingerprint.Profile
+	if s.tlsFPProfileService == nil {
+		if account.IsTLSFingerprintEnabled() {
+			return nil, fmt.Errorf("TLS fingerprint profile service is unavailable")
+		}
+	} else {
+		var profileErr error
+		tlsProfile, profileErr = s.tlsFPProfileService.ResolveTLSProfileStrict(account)
+		if profileErr != nil {
+			return nil, fmt.Errorf("resolve TLS fingerprint profile: %w", profileErr)
+		}
+	}
 
 	// 构建完整的选项
 	opts := &ClaudeUsageFetchOptions{
 		AccessToken: accessToken,
 		ProxyURL:    proxyURL,
 		AccountID:   account.ID,
-		TLSProfile:  s.tlsFPProfileService.ResolveTLSProfile(account),
+		TLSProfile:  tlsProfile,
 	}
 
 	// 尝试获取缓存的 Fingerprint（包含 User-Agent 等信息）

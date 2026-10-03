@@ -12,11 +12,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"golang.org/x/sync/singleflight"
 )
 
 // 预编译正则表达式（避免每次调用重新编译）
@@ -38,7 +40,8 @@ const (
 	// claudeCLIUserAgentProduct 是官方 Claude Code CLI 的产品名（小写）。
 	claudeCLIUserAgentProduct = "claude-cli"
 	// maxFingerprintUserAgentLength 限制写入缓存的 User-Agent 长度。
-	maxFingerprintUserAgentLength = 256
+	maxFingerprintUserAgentLength   = 256
+	maxFingerprintHeaderValueLength = 128
 	// maxClaudeCLIMajorVersionSkew 是 claude-cli 主版本号相对 sub2api 自身伪装
 	// 版本（claude.CLIVersion()）允许的最大超前量。给足两个大版本的升级
 	// 窗口，同时挡掉 999 这类哨兵版本号。
@@ -132,6 +135,14 @@ func defaultFingerprint() Fingerprint {
 	}
 }
 
+func sanitizeFingerprintHeaderValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > maxFingerprintHeaderValueLength || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return value
+}
+
 // Fingerprint represents account fingerprint data
 type Fingerprint struct {
 	ClientID                string
@@ -160,7 +171,8 @@ type IdentityCache interface {
 
 // IdentityService 管理OAuth账号的请求身份指纹
 type IdentityService struct {
-	cache IdentityCache
+	cache         IdentityCache
+	fingerprintSF singleflight.Group
 }
 
 // NewIdentityService 创建新的IdentityService
@@ -172,6 +184,20 @@ func NewIdentityService(cache IdentityCache) *IdentityService {
 // 如果缓存存在，检测user-agent版本，新版本则更新
 // 如果缓存不存在，生成随机ClientID并从请求头创建指纹，然后缓存
 func (s *IdentityService) GetOrCreateFingerprint(ctx context.Context, accountID int64, headers http.Header) (*Fingerprint, error) {
+	result, err, _ := s.fingerprintSF.Do(strconv.FormatInt(accountID, 10), func() (any, error) {
+		return s.getOrCreateFingerprint(ctx, accountID, headers)
+	})
+	if err != nil {
+		return nil, err
+	}
+	fingerprint, ok := result.(*Fingerprint)
+	if !ok || fingerprint == nil {
+		return nil, fmt.Errorf("identity fingerprint resolution returned an invalid result")
+	}
+	return fingerprint, nil
+}
+
+func (s *IdentityService) getOrCreateFingerprint(ctx context.Context, accountID int64, headers http.Header) (*Fingerprint, error) {
 	// 入口统一校验：创建与升级两条路径共用，任一路径漏掉都会让畸形 UA 被持久化。
 	clientUA := strings.TrimSpace(headers.Get("User-Agent"))
 	uaAcceptable := isAcceptableFingerprintUserAgent(clientUA)
@@ -310,14 +336,14 @@ func mergeHeadersIntoFingerprint(fp *Fingerprint, headers http.Header) {
 
 // mergeHeader 如果请求头中存在该字段则更新目标值，否则保留原值
 func mergeHeader(headers http.Header, key string, target *string) {
-	if v := headers.Get(key); v != "" {
+	if v := sanitizeFingerprintHeaderValue(headers.Get(key)); v != "" {
 		*target = v
 	}
 }
 
 // getHeaderOrDefault 获取header值，如果不存在则返回默认值
 func getHeaderOrDefault(headers http.Header, key, defaultValue string) string {
-	if v := headers.Get(key); v != "" {
+	if v := sanitizeFingerprintHeaderValue(headers.Get(key)); v != "" {
 		return v
 	}
 	return defaultValue
@@ -336,23 +362,23 @@ func (s *IdentityService) ApplyFingerprint(req *http.Request, fp *Fingerprint) {
 	}
 
 	// 设置x-stainless-*头（保持与 claude.DefaultHeaders() 一致的大小写）
-	if fp.StainlessLang != "" {
-		setHeaderRaw(req.Header, "X-Stainless-Lang", fp.StainlessLang)
+	if value := sanitizeFingerprintHeaderValue(fp.StainlessLang); value != "" {
+		setHeaderRaw(req.Header, "X-Stainless-Lang", value)
 	}
-	if fp.StainlessPackageVersion != "" {
-		setHeaderRaw(req.Header, "X-Stainless-Package-Version", fp.StainlessPackageVersion)
+	if value := sanitizeFingerprintHeaderValue(fp.StainlessPackageVersion); value != "" {
+		setHeaderRaw(req.Header, "X-Stainless-Package-Version", value)
 	}
-	if fp.StainlessOS != "" {
-		setHeaderRaw(req.Header, "X-Stainless-OS", fp.StainlessOS)
+	if value := sanitizeFingerprintHeaderValue(fp.StainlessOS); value != "" {
+		setHeaderRaw(req.Header, "X-Stainless-OS", value)
 	}
-	if fp.StainlessArch != "" {
-		setHeaderRaw(req.Header, "X-Stainless-Arch", fp.StainlessArch)
+	if value := sanitizeFingerprintHeaderValue(fp.StainlessArch); value != "" {
+		setHeaderRaw(req.Header, "X-Stainless-Arch", value)
 	}
-	if fp.StainlessRuntime != "" {
-		setHeaderRaw(req.Header, "X-Stainless-Runtime", fp.StainlessRuntime)
+	if value := sanitizeFingerprintHeaderValue(fp.StainlessRuntime); value != "" {
+		setHeaderRaw(req.Header, "X-Stainless-Runtime", value)
 	}
-	if fp.StainlessRuntimeVersion != "" {
-		setHeaderRaw(req.Header, "X-Stainless-Runtime-Version", fp.StainlessRuntimeVersion)
+	if value := sanitizeFingerprintHeaderValue(fp.StainlessRuntimeVersion); value != "" {
+		setHeaderRaw(req.Header, "X-Stainless-Runtime-Version", value)
 	}
 }
 

@@ -13,7 +13,9 @@ package tlsfingerprint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,6 +23,104 @@ import (
 	"testing"
 	"time"
 )
+
+func TestSOCKS5DialerHonorsContextCancellation(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+
+	proxyURL, err := url.Parse("socks5h://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer := NewSOCKS5ProxyDialer(&Profile{Name: "test"}, proxyURL)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		conn, dialErr := dialer.DialTLSContext(ctx, "tcp", "example.com:443")
+		if conn != nil {
+			_ = conn.Close()
+		}
+		result <- dialErr
+	}()
+
+	var proxyConn net.Conn
+	select {
+	case proxyConn = <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("SOCKS5 dialer did not connect to the proxy")
+	}
+	cancel()
+	defer func() { _ = proxyConn.Close() }()
+
+	select {
+	case dialErr := <-result:
+		if !errors.Is(dialErr, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", dialErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SOCKS5 dialer ignored context cancellation")
+	}
+}
+
+func TestHTTPProxyDialerHonorsContextCancellation(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			accepted <- conn
+		}
+	}()
+
+	proxyURL, err := url.Parse("http://" + listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer := NewHTTPProxyDialer(&Profile{Name: "test"}, proxyURL)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		conn, dialErr := dialer.DialTLSContext(ctx, "tcp", "example.com:443")
+		if conn != nil {
+			_ = conn.Close()
+		}
+		result <- dialErr
+	}()
+
+	var proxyConn net.Conn
+	select {
+	case proxyConn = <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP proxy dialer did not connect to the proxy")
+	}
+	cancel()
+	defer func() { _ = proxyConn.Close() }()
+
+	select {
+	case dialErr := <-result:
+		if !errors.Is(dialErr, context.Canceled) {
+			t.Fatalf("expected context cancellation, got %v", dialErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("HTTP proxy dialer ignored context cancellation")
+	}
+}
 
 // TestDialerBasicConnection tests that the dialer can establish TLS connections.
 func TestDialerBasicConnection(t *testing.T) {

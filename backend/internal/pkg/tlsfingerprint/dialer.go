@@ -169,9 +169,36 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 
 	// Step 2: Establish SOCKS5 tunnel to target
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
-	conn, err := socksDialer.Dial("tcp", addr)
+	var conn net.Conn
+	if contextDialer, ok := socksDialer.(proxy.ContextDialer); ok {
+		conn, err = contextDialer.DialContext(ctx, "tcp", addr)
+	} else {
+		// Current x/net implementations expose ContextDialer. Keep a bounded
+		// fallback for older implementations instead of allowing a proxy dial
+		// to outlive the request indefinitely.
+		dialResult := make(chan struct {
+			conn net.Conn
+			err  error
+		}, 1)
+		go func() {
+			conn, err := socksDialer.Dial("tcp", addr)
+			dialResult <- struct {
+				conn net.Conn
+				err  error
+			}{conn: conn, err: err}
+		}()
+		select {
+		case result := <-dialResult:
+			conn, err = result.conn, result.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)
 	}
 	slog.Debug("tls_fingerprint_socks5_tunnel_established")
@@ -202,9 +229,14 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	conn, err := dialer.DialContext(ctx, "tcp", proxyAddr)
 	if err != nil {
 		slog.Debug("tls_fingerprint_http_proxy_connect_failed", "error", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("connect to proxy: %w", err)
 	}
 	slog.Debug("tls_fingerprint_http_proxy_connected", "proxy_addr", proxyAddr)
+	stopContextWatcher := watchConnContext(ctx, conn)
+	defer stopContextWatcher()
 
 	// Step 2: Send CONNECT request to establish tunnel
 	req := &http.Request{
@@ -226,6 +258,9 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	if err := req.Write(conn); err != nil {
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_write_failed", "error", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("write CONNECT request: %w", err)
 	}
 
@@ -235,6 +270,9 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	if err != nil {
 		_ = conn.Close()
 		slog.Debug("tls_fingerprint_http_proxy_read_response_failed", "error", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, fmt.Errorf("read CONNECT response: %w", err)
 	}
 	// CONNECT response has no body; do not defer resp.Body.Close() as it wraps the
@@ -271,6 +309,9 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 // It builds a ClientHello spec from the profile, applies it, and completes the handshake.
 // On failure, conn is closed and an error is returned.
 func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, error) {
+	stopContextWatcher := watchConnContext(ctx, conn)
+	defer stopContextWatcher()
+
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
@@ -297,6 +338,24 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		"alpn", state.NegotiatedProtocol)
 
 	return tlsConn, nil
+}
+
+// watchConnContext closes an in-progress connection when its request context
+// is canceled. This covers proxy CONNECT and TLS handshake reads, which may be
+// blocked on a peer that never sends another byte.
+func watchConnContext(ctx context.Context, conn net.Conn) func() {
+	if ctx == nil || conn == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	return func() { close(done) }
 }
 
 // toUTLSCurves converts uint16 slice to utls.CurveID slice.

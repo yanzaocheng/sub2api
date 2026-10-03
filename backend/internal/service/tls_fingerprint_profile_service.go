@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -168,30 +169,37 @@ func (s *TLSFingerprintProfileService) getRandomProfile() *tlsfingerprint.Profil
 	return profiles[rand.IntN(len(profiles))].ToTLSProfile()
 }
 
-// ResolveTLSProfile 根据 Account 的配置解析出运行时 TLS Profile
+// ResolveTLSProfileStrict 根据 Account 的配置解析出运行时 TLS Profile
 //
 // 逻辑：
 //  1. 未启用 TLS 指纹 → 返回 nil（不伪装）
 //  2. 启用 + 绑定了 profile_id → 从缓存查找对应 profile
-//  3. 启用 + 未绑定或找不到 → 返回空 Profile（使用代码内置默认值）
-func (s *TLSFingerprintProfileService) ResolveTLSProfile(account *Account) *tlsfingerprint.Profile {
+//  3. 启用 + 未绑定 → 返回空 Profile（使用代码内置默认值）
+//
+// 显式绑定的 Profile 如果不存在则返回错误，调用方必须停止本次请求，避免
+// 管理员以为已经应用了指定指纹、实际却静默使用另一套配置。
+func (s *TLSFingerprintProfileService) ResolveTLSProfileStrict(account *Account) (*tlsfingerprint.Profile, error) {
 	if account == nil || !account.IsTLSFingerprintEnabled() {
-		return nil
+		return nil, nil
+	}
+	if s == nil {
+		return nil, fmt.Errorf("TLS fingerprint profile service is unavailable")
 	}
 	id := account.GetTLSFingerprintProfileID()
 	if id > 0 {
 		if p := s.GetProfileByID(id); p != nil {
-			return p
+			return p, nil
 		}
+		return nil, fmt.Errorf("TLS fingerprint profile %d is not available", id)
 	}
 	if id == -1 {
 		// 随机选择一个 profile
 		if p := s.getRandomProfile(); p != nil {
-			return p
+			return p, nil
 		}
 	}
 	// TLS 启用但无绑定 profile → 空 Profile → dialer 使用内置默认值
-	return &tlsfingerprint.Profile{Name: "Built-in Default (Claude Code / Bun 1.4.3)"}
+	return &tlsfingerprint.Profile{Name: "Built-in Default (Claude Code / Bun 1.4.3)"}, nil
 }
 
 // --- 缓存管理 ---

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -236,4 +237,106 @@ func TestGetOrCreateFingerprintMissingUserAgentKeepsDefault(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, defaultFingerprint().UserAgent, fp.UserAgent)
+}
+
+func TestGetOrCreateFingerprintSanitizesPersistedStainlessHeaders(t *testing.T) {
+	cache := &stubIdentityCache{}
+	svc := NewIdentityService(cache)
+	headers := headersWithUA("claude-cli/" + claude.CLICurrentVersion)
+	headers.Set("X-Stainless-OS", "Linux\nInjected")
+	headers.Set("X-Stainless-Arch", strings.Repeat("a", maxFingerprintHeaderValueLength+1))
+
+	fp, err := svc.GetOrCreateFingerprint(context.Background(), 1, headers)
+	require.NoError(t, err)
+	require.Equal(t, defaultFingerprint().StainlessOS, fp.StainlessOS)
+	require.Equal(t, defaultFingerprint().StainlessArch, fp.StainlessArch)
+}
+
+type concurrentIdentityCache struct {
+	mu          sync.Mutex
+	fingerprint *Fingerprint
+	setCalls    int
+	getStarted  chan struct{}
+	release     chan struct{}
+	startOnce   sync.Once
+}
+
+func (c *concurrentIdentityCache) GetFingerprint(_ context.Context, _ int64) (*Fingerprint, error) {
+	c.startOnce.Do(func() { close(c.getStarted) })
+	<-c.release
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.fingerprint == nil {
+		return nil, nil
+	}
+	clone := *c.fingerprint
+	return &clone, nil
+}
+
+func (c *concurrentIdentityCache) SetFingerprint(_ context.Context, _ int64, fp *Fingerprint) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.setCalls++
+	clone := *fp
+	c.fingerprint = &clone
+	return nil
+}
+
+func (c *concurrentIdentityCache) GetMaskedSessionID(_ context.Context, _ int64) (string, error) {
+	return "", nil
+}
+
+func (c *concurrentIdentityCache) SetMaskedSessionID(_ context.Context, _ int64, _ string) error {
+	return nil
+}
+
+func TestGetOrCreateFingerprintCoalescesConcurrentCreation(t *testing.T) {
+	cache := &concurrentIdentityCache{
+		getStarted: make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	svc := NewIdentityService(cache)
+
+	const callers = 8
+	results := make(chan *Fingerprint, callers)
+	errorsCh := make(chan error, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fp, err := svc.GetOrCreateFingerprint(context.Background(), 99, headersWithUA("claude-cli/"+claude.CLICurrentVersion))
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			results <- fp
+		}()
+	}
+
+	select {
+	case <-cache.getStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first fingerprint lookup did not start")
+	}
+	close(cache.release)
+	wg.Wait()
+	close(results)
+	close(errorsCh)
+
+	for err := range errorsCh {
+		require.NoError(t, err)
+	}
+	var first *Fingerprint
+	for fp := range results {
+		if first == nil {
+			first = fp
+			continue
+		}
+		require.Equal(t, first.ClientID, fp.ClientID)
+	}
+	require.NotNil(t, first)
+	cache.mu.Lock()
+	require.Equal(t, 1, cache.setCalls, "concurrent misses should persist one fingerprint")
+	cache.mu.Unlock()
 }

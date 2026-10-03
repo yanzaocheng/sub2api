@@ -674,7 +674,13 @@ func (s *UpstreamBillingProbeService) probeLoadedAccount(ctx context.Context, ac
 	account.ApplyHeaderOverrides(req.Header)
 	var tlsProfile *tlsfingerprint.Profile
 	if s.accountTestService.tlsFPProfileService != nil {
-		tlsProfile = s.accountTestService.tlsFPProfileService.ResolveTLSProfile(account)
+		var profileErr error
+		tlsProfile, profileErr = s.accountTestService.tlsFPProfileService.ResolveTLSProfileStrict(account)
+		if profileErr != nil {
+			return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "tls_profile_unavailable", 0)
+		}
+	} else if account.IsTLSFingerprintEnabled() {
+		return s.persistProbeFailure(ctx, account, intervalMinutes, now, 0, "tls_profile_service_unavailable", 0)
 	}
 	resp, err := s.accountTestService.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
 	if err != nil {

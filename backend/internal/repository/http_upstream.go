@@ -6,6 +6,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -563,7 +564,8 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	settings := s.resolvePoolSettings(isolation, accountConcurrency)
 	settings = s.applyProfilePoolSettings(settings, upstreamProfile)
 	// TLS 指纹客户端使用独立的缓存键，加 "tls:" 前缀
-	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault)
+	profileKey := tlsFingerprintProfileKey(profile)
+	cacheKey := "tls:" + buildCacheKey(isolation, proxyKey, accountID, upstreamProtocolModeDefault) + "|profile:" + profileKey
 	poolKey := buildPoolKey(settings, upstreamProtocolModeDefault) + ":tls"
 
 	now := time.Now()
@@ -614,7 +616,7 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	}
 
 	// 创建带 TLS 指纹的 Transport
-	slog.Debug("tls_fingerprint_creating_new_client", "account_id", accountID, "cache_key", cacheKey, "proxy", proxyKey)
+	slog.Debug("tls_fingerprint_creating_new_client", "account_id", accountID, "cache_key", cacheKey, "proxy", proxyKey, "profile", profileKey)
 	transport, err := buildUpstreamTransportWithTLSFingerprint(settings, parsedProxy, profile)
 	if err != nil {
 		s.mu.Unlock()
@@ -641,6 +643,25 @@ func (s *httpUpstreamService) getClientEntryWithTLS(proxyURL string, accountID i
 	s.evictOverLimitLocked()
 	s.mu.Unlock()
 	return entry, nil
+}
+
+// tlsFingerprintProfileKey returns a stable content key for a runtime TLS
+// profile. The profile name alone is insufficient because an administrator can
+// edit the parameters without renaming it. Keeping the full profile content in
+// the client-pool key prevents a transport created with an old ClientHello
+// configuration from being reused after a profile update.
+func tlsFingerprintProfileKey(profile *tlsfingerprint.Profile) string {
+	if profile == nil {
+		return "none"
+	}
+	raw, err := json.Marshal(profile)
+	if err != nil {
+		// Profile contains only JSON-safe scalar and slice fields. Keep a stable
+		// fail-safe key even if that ever changes in the future.
+		return "invalid"
+	}
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf("%x", sum[:8])
 }
 
 func (s *httpUpstreamService) shouldValidateResolvedIP() bool {
@@ -1454,8 +1475,9 @@ func enableHTTP2KeepAlive(transport *http.Transport, protocolMode string) (*http
 //
 // 代理类型处理:
 //   - nil/空: 直连，使用 TLSFingerprintDialer
-//   - http/https: HTTP 代理，使用 HTTPProxyDialer（CONNECT 隧道 + utls 握手）
+//   - http: HTTP 代理，使用 HTTPProxyDialer（CONNECT 隧道 + utls 握手）
 //   - socks5: SOCKS5 代理，使用 SOCKS5ProxyDialer（SOCKS5 隧道 + utls 握手）
+//   - https/unknown: fail closed，避免静默回退到普通 Transport
 func buildUpstreamTransportWithTLSFingerprint(settings poolSettings, proxyURL *url.URL, profile *tlsfingerprint.Profile) (*http.Transport, error) {
 	transport := &http.Transport{
 		MaxIdleConns:          settings.maxIdleConns,

@@ -1,6 +1,9 @@
 package service
 
-import "net/http"
+import (
+	"fmt"
+	"net/http"
+)
 
 func (s *OpenAIGatewayService) SetPluginManager(manager *PluginManager) {
 	s.pluginManager = manager
@@ -33,12 +36,22 @@ func (s *AccountTestService) doOpenAIAccountTestUpstream(
 		}
 	}
 	if useTLSFallback {
+		if s.tlsFPProfileService == nil {
+			if account != nil && account.IsTLSFingerprintEnabled() {
+				return nil, fmt.Errorf("TLS fingerprint profile service is unavailable")
+			}
+			return s.httpUpstream.DoWithTLS(request, proxyURL, account.ID, account.Concurrency, nil)
+		}
+		profile, err := s.tlsFPProfileService.ResolveTLSProfileStrict(account)
+		if err != nil {
+			return nil, err
+		}
 		return s.httpUpstream.DoWithTLS(
 			request,
 			proxyURL,
 			account.ID,
 			account.Concurrency,
-			s.tlsFPProfileService.ResolveTLSProfile(account),
+			profile,
 		)
 	}
 	return s.httpUpstream.Do(request, proxyURL, account.ID, account.Concurrency)
